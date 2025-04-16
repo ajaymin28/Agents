@@ -22,8 +22,8 @@ A flexible agent framework for working with Ollama models, focusing on Vision La
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/ollama-agent-project.git
-cd ollama-agent-project
+git clone https://github.com/ajaymin28/Agents.git
+cd Agents
 
 # Install dependencies
 pip install -r requirements.txt
@@ -33,8 +33,8 @@ pip install -r requirements.txt
 
 1. Ensure Ollama is running and has the required models:
 ```bash
-ollama pull llava-1.5-7b
-ollama pull sd-1.5
+ollama pull llava:7b-v1.5-q4_0
+ollama pull gemma3:4b-it-q4_K_M
 ```
 
 2. Start the agent server:
@@ -71,9 +71,9 @@ sudo systemctl start ollama-agent
 ### Cloud Platforms
 
 Configurations are provided for:
-- Google Cloud Run
-- Heroku
-- Any platform supporting Docker containers
+- [ ] Google Cloud Run
+- [ ] Heroku
+- [ ] Any platform supporting Docker containers
 
 ## Architecture
 
