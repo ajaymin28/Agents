@@ -57,7 +57,9 @@ class Application:
         # Initialize components
         self.communication_bus = CommunicationBus()
         self.resource_monitor = ResourceMonitor()
-        self.engine = CoreEngine(self.communication_bus, self.resource_monitor, self.settings)
+        self.engine = CoreEngine(self.settings)
+        self.engine.resource_monitor = self.resource_monitor
+
         self.ollama_client = OllamaClient(
             base_url=self.settings.get("ollama", "base_url", "http://localhost:11434"),
             timeout=self.settings.get("ollama", "timeout", 60)
@@ -104,12 +106,23 @@ class Application:
         else:
             logger.info("Applying high-resource settings")
             self.settings.apply_high_resource_settings()
-        
-        # Initialize agents with resource profile
-        await self.coordinator_agent.initialize(resource_profile)
-        await self.vlm_agent.initialize(resource_profile)
-        await self.sd_agent.initialize(resource_profile)
-        await self.tool_agent.initialize(resource_profile)
+    
+        # Make sure each agent is only initialized once
+        if not hasattr(self.coordinator_agent, '_initialized'):
+            await self.coordinator_agent.initialize(resource_profile)
+            self.coordinator_agent._initialized = True
+            
+        if not hasattr(self.vlm_agent, '_initialized'):
+            await self.vlm_agent.initialize(resource_profile)
+            self.vlm_agent._initialized = True
+            
+        if not hasattr(self.sd_agent, '_initialized'):
+            await self.sd_agent.initialize(resource_profile)
+            self.sd_agent._initialized = True
+            
+        if not hasattr(self.tool_agent, '_initialized'):
+            await self.tool_agent.initialize(resource_profile)
+            self.tool_agent._initialized = True
         
         # Start API server
         await self.api_server.start()
@@ -158,6 +171,10 @@ class Application:
 if __name__ == "__main__":
     # Get configuration path from command line arguments
     config_path = sys.argv[1] if len(sys.argv) > 1 else None
+
+    import platform
+    if platform.system()=='Windows':
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     
     # Create and run application
     app = Application(config_path)

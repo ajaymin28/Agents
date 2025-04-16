@@ -15,6 +15,8 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import uvicorn
+from uvicorn.config import Config
+from uvicorn.server import Server
 
 from ..core.engine import CoreEngine
 from ..config.settings import Settings
@@ -106,7 +108,7 @@ class APIServer:
         async def submit_task(task: TaskRequest):
             try:
                 # Submit task to engine
-                task_id = await self.engine.submit_task(
+                task_id = await self.engine.create_task(
                     task_type=task.type,
                     inputs=task.inputs,
                     parameters=task.parameters
@@ -209,21 +211,28 @@ class APIServer:
     async def start(self):
         """Start the API server."""
         logger.info(f"Starting API Server on {self.config.host}:{self.config.port}")
-        # Note: In a real implementation, we would start the server here
-        # For this example, we'll just log that it's started
-        logger.info("API Server started")
-        
+        uvicorn_config = Config(
+            app=self.app,
+            host=self.config.host,
+            port=self.config.port,
+            loop="asyncio"
+        )
+        self.uvicorn_server = Server(uvicorn_config)
+        await self.uvicorn_server.serve()
+
     async def stop(self):
         """Stop the API server."""
         logger.info("Stopping API Server")
-        # Note: In a real implementation, we would stop the server here
-        # For this example, we'll just log that it's stopped
+        if self.uvicorn_server:
+            await self.uvicorn_server.shutdown()
+            self.uvicorn_server = None
         logger.info("API Server stopped")
         
     def run(self):
         """Run the API server (blocking)."""
-        uvicorn.run(
-            self.app,
-            host=self.config.host,
-            port=self.config.port
-        )
+        # uvicorn.run(
+        #     self.app,
+        #     host=self.config.host,
+        #     port=self.config.port
+        # )
+        asyncio.run(self.start())

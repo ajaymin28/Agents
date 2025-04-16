@@ -40,7 +40,7 @@ class Settings:
             
             # Model settings
             "models": {
-                "default_vlm": "llava-1.5-7b",
+                "default_vlm": "llava:7b-v1.5-q4_0",
                 "default_sd": "sd-1.5",
                 "quantization": "4-bit",
                 "max_batch_size": 4,

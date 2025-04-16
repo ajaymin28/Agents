@@ -10,6 +10,7 @@ import asyncio
 from typing import Dict, List, Any, Optional, Callable
 
 from ..utils.resource_monitor import ResourceMonitor
+from ..core.communication_bus import CommunicationBus
 from ..config.settings import Settings
 
 logger = logging.getLogger(__name__)
@@ -35,6 +36,7 @@ class CoreEngine:
         self.settings = settings or Settings()
         self.agents = {}
         self.tasks = {}
+        self.communication_bus = CommunicationBus()
         self.resource_monitor = ResourceMonitor()
         self.event_handlers = {}
         logger.info("Core Engine initialized")
@@ -66,6 +68,11 @@ class CoreEngine:
             agent: Agent instance to register
         """
         logger.info(f"Registering agent: {agent_id}")
+        # Check if agent is already registered
+        if agent_id in self.agents:
+            logger.warning(f"Agent already registered: {agent_id}")
+            return False
+    
         self.agents[agent_id] = agent
         # Initialize agent with current resource constraints
         resource_profile = await self.resource_monitor.get_resource_profile()

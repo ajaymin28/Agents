@@ -50,7 +50,7 @@ class VLMAgent:
             "visual_reasoning"
         ]
         self.models = {}
-        self.default_model = self.settings.get("models", "default_vlm", "llava-1.5-7b")
+        self.default_model = self.settings.get("models", "default_vlm", "llava:7b-v1.5-q4_0")
         logger.info("VLM Agent initialized")
         
     async def initialize(self, resource_profile: Dict[str, Any]):
@@ -68,7 +68,7 @@ class VLMAgent:
         if is_low_resource:
             logger.info("Using low-resource configuration for VLM Agent")
             # Use smaller models or more aggressive quantization
-            self.default_model = "llava-1.5-7b-q4"
+            self.default_model = "llava:7b-v1.5-q4_0"
         
         # Register with the engine
         await self.engine.register_agent("vlm_agent", self)
@@ -79,7 +79,7 @@ class VLMAgent:
     async def shutdown(self):
         """Shutdown the agent and cleanup resources."""
         logger.info("Shutting down VLM Agent")
-        # Nothing specific to clean up
+        await self.ollama_client.stop()  # Ensure client cleanup
         
     async def _check_models(self):
         """Check if required models are available in Ollama."""
@@ -88,24 +88,23 @@ class VLMAgent:
         try:
             # Get list of available models
             models = await self.ollama_client.list_models()
+            logger.info(f"Available models: {models}")
             
             # Check if our default model is available
-            default_model_available = any(m.get("name") == self.default_model for m in models)
+            default_model_available = any(m.model.startswith(self.default_model) for m in models)
             
             if not default_model_available:
                 logger.warning(f"Default VLM model {self.default_model} not available")
-                # We could trigger a model pull here, but that might be too heavy
-                # for automatic initialization
             else:
                 logger.info(f"Default VLM model {self.default_model} is available")
                 
-            # Store available VLM models
+            # Store available VLM models (filter for known VLM models)
             self.models = {
-                m.get("name"): m for m in models 
-                if "llava" in m.get("name").lower() or "cogvlm" in m.get("name").lower()
+                m.model: m for m in models 
+                if any(vlm in m.model.lower() for vlm in ["llava", "bakllava", "clip"])
             }
             
-            logger.info(f"Found {len(self.models)} VLM models")
+            logger.info(f"Found {len(self.models)} VLM models: {list(self.models.keys())}")
             
         except Exception as e:
             logger.exception(f"Error checking VLM models: {e}")
@@ -123,25 +122,31 @@ class VLMAgent:
         task_type = task.get("type")
         logger.info(f"Processing {task_type} task: {task.get('id')}")
         
-        if task_type == "image_understanding":
-            return await self.understand_image(
-                image=task.get("inputs", {}).get("image"),
-                prompt=task.get("inputs", {}).get("prompt", "Describe this image in detail."),
-                model=task.get("parameters", {}).get("model", self.default_model)
-            )
-        elif task_type == "visual_qa":
-            return await self.visual_qa(
-                image=task.get("inputs", {}).get("image"),
-                question=task.get("inputs", {}).get("question"),
-                model=task.get("parameters", {}).get("model", self.default_model)
-            )
-        elif task_type == "image_captioning":
-            return await self.caption_image(
-                image=task.get("inputs", {}).get("image"),
-                model=task.get("parameters", {}).get("model", self.default_model)
-            )
-        else:
-            raise ValueError(f"Unsupported task type: {task_type}")
+        try:
+            if task_type == "image_understanding":
+                return await self.understand_image(
+                    image=task.get("inputs", {}).get("image"),
+                    prompt=task.get("inputs", {}).get("prompt", "Describe this image in detail."),
+                    model=task.get("parameters", {}).get("model", self.default_model)
+                )
+            elif task_type == "visual_qa":
+                return await self.visual_qa(
+                    image=task.get("inputs", {}).get("image"),
+                    question=task.get("inputs", {}).get("question"),
+                    model=task.get("parameters", {}).get("model", self.default_model)
+                )
+            elif task_type == "image_captioning":
+                return await self.caption_image(
+                    image=task.get("inputs", {}).get("image"),
+                    model=task.get("parameters", {}).get("model", self.default_model)
+                )
+            else:
+                logger.error(f"Unsupported task type: {task_type}")
+                raise ValueError(f"Unsupported task type: {task_type}")
+                
+        except Exception as e:
+            logger.exception(f"Error processing task {task_type}: {e}")
+            return {"error": str(e), "task_id": task.get("id")}
             
     async def get_resource_requirements(self, task: Dict[str, Any]) -> Dict[str, float]:
         """
@@ -153,20 +158,19 @@ class VLMAgent:
         Returns:
             Dictionary of resource requirements
         """
-        # Default requirements
         requirements = {
             "memory_gb": 2.0,
-            "vram_gb": 3.5 if self.settings.get("models", "quantization") == "4-bit" else 7.0,
+            "vram_gb": 2.5 if self.settings.get("models", "quantization") == "4-bit" else 7.0,
             "cpu_percent": 50.0,
             "gpu_percent": 80.0
         }
         
         # Adjust based on model
         model = task.get("parameters", {}).get("model", self.default_model)
-        if "13b" in model:
-            requirements["vram_gb"] *= 1.5
-        elif "70b" in model:
-            requirements["vram_gb"] *= 3.0
+        if "7b" in model:
+            requirements["vram_gb"] = 2.0
+        elif "34b" in model:
+            requirements["vram_gb"] = 12.0
             
         return requirements
         
@@ -191,32 +195,27 @@ class VLMAgent:
             model = self.default_model
             
         try:
-            # Process the image
             images = [image] if image else []
-            
-            # Generate understanding
             start_time = asyncio.get_event_loop().time()
             response = await self.ollama_client.generate(
                 model=model,
                 prompt=prompt,
                 images=images,
                 options={
-                    "temperature": 0.1,  # Low temperature for more factual responses
-                    "num_predict": 1024  # Limit response length
+                    "temperature": 0.1,
+                    "max_tokens": 1024
                 }
             )
             end_time = asyncio.get_event_loop().time()
             
-            # Extract and process the response
             description = response.get("response", "")
-            
-            # Extract tags from the description
             tags = self._extract_tags(description)
             
             result = {
                 "description": description,
                 "tags": tags,
-                "processing_time": round(end_time - start_time, 2)
+                "processing_time": round(end_time - start_time, 2),
+                "model": model
             }
             
             logger.info(f"Image understanding completed in {result['processing_time']}s")
@@ -226,7 +225,8 @@ class VLMAgent:
             logger.exception(f"Error in image understanding: {e}")
             return {
                 "error": str(e),
-                "description": "Failed to understand image"
+                "description": "Failed to understand image",
+                "model": model
             }
             
     async def visual_qa(self,
@@ -260,8 +260,8 @@ class VLMAgent:
                 prompt=f"Answer this question about the image: {question}",
                 images=images,
                 options={
-                    "temperature": 0.1,  # Low temperature for more factual responses
-                    "num_predict": 512   # Limit response length
+                    "temperature": 0.1,
+                    "max_tokens": 512
                 }
             )
             end_time = asyncio.get_event_loop().time()
@@ -275,7 +275,8 @@ class VLMAgent:
             result = {
                 "answer": answer,
                 "confidence": confidence,
-                "processing_time": round(end_time - start_time, 2)
+                "processing_time": round(end_time - start_time, 2),
+                "model": model
             }
             
             logger.info(f"Visual QA completed in {result['processing_time']}s")
@@ -285,7 +286,8 @@ class VLMAgent:
             logger.exception(f"Error in visual QA: {e}")
             return {
                 "error": str(e),
-                "answer": "Failed to answer question about image"
+                "answer": "Failed to answer question about image",
+                "model": model
             }
             
     async def caption_image(self,
@@ -318,17 +320,17 @@ class VLMAgent:
                 images=images,
                 options={
                     "temperature": 0.2,
-                    "num_predict": 100  # Short caption
+                    "max_tokens": 100
                 }
             )
             end_time = asyncio.get_event_loop().time()
             
-            # Extract and process the response
             caption = response.get("response", "").strip()
             
             result = {
                 "caption": caption,
-                "processing_time": round(end_time - start_time, 2)
+                "processing_time": round(end_time - start_time, 2),
+                "model": model
             }
             
             logger.info(f"Image captioning completed in {result['processing_time']}s")
@@ -338,7 +340,8 @@ class VLMAgent:
             logger.exception(f"Error in image captioning: {e}")
             return {
                 "error": str(e),
-                "caption": "Failed to generate caption"
+                "caption": "Failed to generate caption",
+                "model": model
             }
             
     def _extract_tags(self, text: str) -> List[str]:
